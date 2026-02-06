@@ -14,20 +14,20 @@ DATA_DIR = DATA / "aclImdb"
 
 def download_and_extract() -> None:
     if not os.path.exists(ARCHIVE):
-        print("Dow<nloading Stanford IMDb dataset...")
+        print("Downloading Stanford IMDb dataset...")
         urllib.request.urlretrieve(URL, ARCHIVE)
     
     if not os.path.exists(DATA_DIR):
         print("Extracting dataset...")
         with tarfile.open(ARCHIVE, "r:gz") as tar:
-            tar.extractall()
+            tar.extractall(path = DATA)
 
 def load_split(split: str) -> Tuple[List[str], np.ndarray]:
     """
     Returns texts and labels for split in {"train", "test"}.
     label : 1=pos, 0=neg 
     """
-    base = os.path.join(DATA_DIR, split)
+    base = DATA_DIR / split
     texts: List[str] = []
     labels: List[int] = []
 
@@ -42,20 +42,37 @@ def load_split(split: str) -> Tuple[List[str], np.ndarray]:
 
     return texts, np.array(labels, dtype=int)
 
-def topk_indices(doc_matrix, query_matrix, k: int) -> np.ndarray:
+def batched_topk_indices(doc_matrix, query_matrix, k: int, batch_size: int = 1000) -> np.ndarray:
     """
-    Compute top-k doc indices for each query using cosine similarity. 
-    With sklearn TF-YDF (L2-normalized), cosine similarity == dot product. 
-    Returns shape: (n_queries, k)
+    Compute top-k indices using batching to save memory.
+    doc_matrix: (n_docs, n_features) - sparse or dense
+    query_matrix: (n_queries, n_features) - sparse or dense
     """
-    sims = (doc_matrix @ query_matrix.T).toarray().T # (n_queries, n_docs)
-    k = min(k, sims.shape[1])
-
-    part = np.argpartition(sims, -k, axis=1)[:, -k] # (n_queris, k) unordered
-    row = np.arange(sims.shape[0])[:, None]
-    order = np.argsort(sims[row, part], axis = 1)[:, ::-1]
+    n_queries = query_matrix.shape[0]
+    n_docs = doc_matrix.shape[0]
+    k = min(k, n_docs)
     
-    return part[row, order]
+    all_topk_idx = np.zeros((n_queries, k), dtype=np.int32)
+    doc_matrix_T = doc_matrix.T
+
+    for start_idx in range(0, n_queries, batch_size):
+        end_idx = min(start_idx + batch_size, n_queries)
+        
+        # Result shape: (batch_size, n_docs)
+        batch_sims = query_matrix[start_idx:end_idx].dot(doc_matrix_T).toarray()
+        
+        # Find top-k in this batch (partition + sort)
+        current_batch_size = end_idx - start_idx
+        unsorted_topk = np.argpartition(batch_sims, -k, axis=1)[:, -k:]
+        
+        row_idx = np.arange(current_batch_size)[:, None]
+        topk_sims = batch_sims[row_idx, unsorted_topk]
+        sorted_within_topk = np.argsort(topk_sims, axis=1)[:, ::-1]
+        
+        # Store result in the pre-allocated array
+        all_topk_idx[start_idx:end_idx] = unsorted_topk[row_idx, sorted_within_topk]
+        
+    return all_topk_idx
 
 def precision_at_k(retrieved_idx: np.ndarray, doc_labels: np.ndarray, query_labels: np.ndarray) -> float:
     """
