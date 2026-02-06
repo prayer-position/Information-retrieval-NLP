@@ -84,3 +84,24 @@ def precision_at_k(retrieved_idx: np.ndarray, doc_labels: np.ndarray, query_labe
     retrieved_labels = doc_labels[retrieved_idx] #(n_queries, k)
     matches = (retrieved_labels == query_labels[:, None]).mean(axis = 1) # per-query precision@K
     return float(matches.mean())
+
+def predicted_sentiment(new_review_text: str, vectorizer, train_tfidf, train_labels, k: int = 11):
+    """
+    Predicts the sentiment score for a single string of text
+    closer to 1 = positive
+    Closer to 0 = negative 
+    """
+    # Transform review using fitted vectorizer
+    # Wrap it in a list because vectorizer expects an iterable object
+    query_tfidf = vectorizer.transform([new_review_text])
+
+    # Get the indices of the top-k most similar training docs
+    # using batched function 
+    topk_idx = batched_topk_indices(train_tfidf, query_tfidf, k= k)
+
+    # Labels for the neighbors
+    neighbor_labels = train_labels[topk_idx[0]]
+
+    sentiment_score = np.mean(neighbor_labels)
+
+    return sentiment_score
