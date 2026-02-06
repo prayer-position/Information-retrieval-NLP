@@ -1,0 +1,7 @@
+nltk
+ipykernel
+numpy
+scipy
+gensim
+sentence-transformers
+spacy
